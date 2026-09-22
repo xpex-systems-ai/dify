@@ -163,6 +163,10 @@ def create_app() -> tuple[socketio.WSGIApp, DifyApp]:
     app = create_flask_app_with_configs()
     initialize_extensions(app)
 
+    # XPEX Intelligence Command Center must be registered before Socket.IO wraps Flask.
+    from xpex_command_center import bp as xpex_command_center_bp
+    app.register_blueprint(xpex_command_center_bp)
+
     sio.app = app
     socketio_app = socketio.WSGIApp(sio, app)
 

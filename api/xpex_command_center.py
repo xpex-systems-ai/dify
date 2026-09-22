@@ -37,3 +37,5 @@ def health():
 def pipeline():
     data=request.get_json(silent=True) or {}
     return jsonify({"accepted":True,"pipeline":"rastreamento->qualificacao->assets->execucao->entrega->pagamento","input":data,"state":"QUALIFYING"})
+
+# deployment trigger: GXEON Command Center root route 2026-09-22

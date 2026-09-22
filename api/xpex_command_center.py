@@ -205,7 +205,23 @@ def radar_scan():
                 if "bounty" not in hay and "reward" not in hay and "payout" not in hay: continue
                 url=str(issue.get("html_url") or "")
                 if not url: continue
-                found.append({"title":title,"source":url,"reward_text":_reward_from_text(title,body),"status":"open","provider":source["name"],"external_id":str(issue.get("number","")),"discovered_at":int(time.time())})
+                reward=_reward_from_text(title,body)
+                fit=95 if any(k in hay for k in ["video","youtube","short","bottube","content","distribution"]) else (85 if any(k in hay for k in ["agent","api","integration","mcp"]) else 70)
+                found.append({
+                    "external_id":str(issue.get("number","")),
+                    "title":title,
+                    "source":url,
+                    "reward_text":reward,
+                    "status":"open",
+                    "fit_score":fit,
+                    "metadata":{
+                        "provider":source["name"],
+                        "discovered_at":int(time.time()),
+                        "html_url":url,
+                        "labels":[str(x.get("name","")) for x in (issue.get("labels") or [])],
+                        "updated_at":issue.get("updated_at"),
+                    },
+                })
         except Exception as ex: errors.append({"source":source["name"],"error":str(ex)[:180]})
     inserted=0
     for item in found:

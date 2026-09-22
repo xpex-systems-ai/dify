@@ -1,5 +1,5 @@
 from flask import Blueprint, jsonify, request, Response
-import os, urllib.request, json, time
+import os, urllib.request, json, time, re
 from pathlib import Path
 
 bp = Blueprint("xpex_command_center", __name__)
@@ -39,7 +39,7 @@ PAGE = r"""<!doctype html><html><head><meta charset="utf-8"><meta name="viewport
 <section id="cenara" class="view hidden"><div class="panel"><h2>Cenara</h2><p>Motor de geração de mídia.</p><button class="btn" onclick="window.open('https://cenara-xpex-systems-production.up.railway.app','_blank')">ABRIR CENARA</button></div></section>
 <section id="dify" class="view hidden"><div class="panel"><h2>Dify Brain</h2><p>Brain e API do Command Center estão operando neste serviço.</p><button class="btn" onclick="fetch('/xpex/api/health').then(r=>r.json()).then(x=>answer.textContent=JSON.stringify(x,null,2))">TESTAR BRAIN</button></div></section>
 <section id="assets" class="view hidden"><div class="panel"><h2>Assets</h2><div class="form"><input id="assetName" placeholder="Nome do asset"><input id="assetUri" placeholder="URL/URI"><select id="assetType"><option>video</option><option>image</option><option>audio</option><option>document</option><option>code</option></select><button class="btn" onclick="addAsset()">CATALOGAR</button></div><div id="assetsList"></div></div></section>
-<section id="opportunities" class="view hidden"><div class="panel"><h2>Oportunidades</h2><div class="form"><input id="oppTitle" placeholder="Título"><input id="oppSource" placeholder="Fonte/URL"><input id="oppReward" placeholder="Recompensa"><button class="btn" onclick="addOpp()">REGISTRAR</button></div><div id="oppsList"></div></div></section>
+<section id="opportunities" class="view hidden"><div class="panel"><h2>Oportunidades</h2><div class="form"><button class="btn" onclick="scanRadar()">⚡ ATIVAR RADAR REAL</button><span id="radarStatus" class="muted">Radar pronto para varredura.</span></div><div class="form"><input id="oppTitle" placeholder="Título"><input id="oppSource" placeholder="Fonte/URL"><input id="oppReward" placeholder="Recompensa"><button class="btn" onclick="addOpp()">REGISTRAR</button></div><div id="oppsList"></div></div></section>
 <section id="jobs" class="view hidden"><div class="panel"><h2>Projetos / Execuções</h2><p class="muted">Execuções registradas no pipeline.</p><div id="jobsList"></div></div></section>
 <section id="finance" class="view hidden"><div class="panel"><h2>Finanças</h2><p>Pagamentos confirmados alimentam Receita Confirmada.</p><div id="paymentsList"></div></div></section>
 <section id="connectors" class="view hidden"><div class="panel"><h2>Conectores</h2><div id="connectorsList"></div></div></section>
@@ -52,6 +52,7 @@ async function stats(){try{let d=await api('stats');$('assetsK').textContent=d.a
 function rows(a,fields){return !a.length?'<p class="muted">Nenhum registro ainda.</p>':a.map(x=>'<div class="row">'+fields.map(f=>'<span>'+String(x[f]??'—')+'</span>').join('')+'</div>').join('')}
 async function loadView(id){try{if(id==='assets')$('assetsList').innerHTML=rows(await api('assets'),['name','asset_type','source','created_at']);if(id==='opportunities')$('oppsList').innerHTML=rows(await api('opportunities'),['title','reward_text','status','source']);if(id==='jobs')$('jobsList').innerHTML=rows(await api('jobs'),['id','state','opportunity_id','created_at']);if(id==='finance')$('paymentsList').innerHTML=rows(await api('payments'),['amount','currency','status','tx_ref'])}catch(e){let el=$(id==='assets'?'assetsList':id==='opportunities'?'oppsList':id==='jobs'?'jobsList':'paymentsList');if(el)el.innerHTML='<p class="red">'+e.message+'</p>'}}
 async function addAsset(){let x={name:$('assetName').value||'Asset',uri:$('assetUri').value,asset_type:$('assetType').value,source:'command-center'};await api('assets',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(x)});await stats();loadView('assets')}
+async function scanRadar(){let s=$('radarStatus');s.textContent='Rastreando fontes públicas reais...';try{let d=await api('radar/scan',{method:'POST'});s.textContent='Radar: '+d.discovered+' encontradas • '+d.inserted+' novas registradas';await stats();await loadView('opportunities')}catch(e){s.textContent='Radar: '+e.message}}
 async function addOpp(){let x={title:$('oppTitle').value||'Oportunidade',source:$('oppSource').value,reward_text:$('oppReward').value,status:'open'};await api('opportunities',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(x)});await stats();loadView('opportunities')}
 async function runInput(){let q=$('q').value.trim();if(!q)return;$('answer').textContent='Processando '+q;try{if(/^https?:\/\//i.test(q)){await api('assets',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:q.split('/').filter(Boolean).pop()||'URL Asset',uri:q,asset_type:'link',source:new URL(q).hostname})});$('answer').textContent='Asset registrado no núcleo persistente. Abra Assets para visualizar.';await stats()}else{let d=await api('pipeline',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({command:q})});$('answer').textContent='Pipeline aceito: '+d.state}}catch(e){$('answer').textContent='Erro: '+e.message}}
 health();stats();let initial=location.hash.slice(1);if(initial&&$(initial))show(initial);setInterval(()=>{health();stats()},30000)</script></body></html>"""
@@ -157,3 +158,57 @@ def add_delivery():
 @bp.post("/xpex/api/payments")
 def add_payment():
     d=_load_data(); item=request.get_json(silent=True) or {}; item["id"]=_id("PAY"); item.setdefault("status","pending"); item["created_at"]=int(time.time()); d["payments"].append(item); _save_data(d); return jsonify(item),201
+
+
+# XPEX RADAR V1 — credential-free public-source discovery, no fabricated opportunities
+RADAR_SOURCES=[{"name":"RustChain Bounties","url":"https://api.github.com/repos/Scottcjn/rustchain-bounties/issues?state=open&per_page=100&sort=updated&direction=desc"}]
+
+def _radar_fetch(url):
+    req=urllib.request.Request(url,headers={"Accept":"application/vnd.github+json","User-Agent":"XPEX-GXEON-Radar/1.0"})
+    with urllib.request.urlopen(req,timeout=15) as r: return json.loads(r.read().decode())
+
+def _reward_from_text(title, body=""):
+    text=(title+"\n"+(body or ""))[:5000]
+    m=re.search(r"(?:BOUNTY|REWARD)[^\n]{0,40}?(\d+(?:\.\d+)?(?:\s*[-–]\s*\d+(?:\.\d+)?)?)\s*(RTC|USD|USDC|USDT|ETH|BTC|BRL|R\$)",text,re.I)
+    if not m: m=re.search(r"(\d+(?:\.\d+)?(?:\s*[-–]\s*\d+(?:\.\d+)?)?)\s*(RTC|USD|USDC|USDT|ETH|BTC|BRL|R\$)",text,re.I)
+    return (m.group(1)+" "+m.group(2).upper()) if m else "ver fonte"
+
+def _existing_opportunity_urls():
+    try:
+        x=_supabase("opportunities")
+        if isinstance(x,list): return {str(i.get("source","")) for i in x}
+    except Exception: pass
+    return {str(i.get("source","")) for i in _load_data().get("opportunities",[])}
+
+def _persist_radar_opportunity(item):
+    try:
+        x=_supabase("opportunities","POST",item)
+        if x is not None: return True
+    except Exception: pass
+    d=_load_data(); item=dict(item); item["id"]=_id("OPP"); item["created_at"]=int(time.time()); d["opportunities"].append(item); _save_data(d); return True
+
+@bp.get("/xpex/api/radar/status")
+def radar_status():
+    return jsonify({"enabled":os.getenv("XPEX_OPPORTUNITY_RADAR_ENABLED","false").lower()=="true","sources":[s["name"] for s in RADAR_SOURCES],"mode":"real-public-sources"})
+
+@bp.post("/xpex/api/radar/scan")
+def radar_scan():
+    if os.getenv("XPEX_OPPORTUNITY_RADAR_ENABLED","false").lower()!="true": return jsonify({"error":"radar_disabled"}),503
+    existing=_existing_opportunity_urls(); found=[]; errors=[]
+    for source in RADAR_SOURCES:
+        try:
+            for issue in _radar_fetch(source["url"]):
+                if issue.get("pull_request"): continue
+                title=str(issue.get("title",""))
+                body=str(issue.get("body") or "")
+                hay=(title+" "+body[:1200]).lower()
+                if "bounty" not in hay and "reward" not in hay and "payout" not in hay: continue
+                url=str(issue.get("html_url") or "")
+                if not url: continue
+                found.append({"title":title,"source":url,"reward_text":_reward_from_text(title,body),"status":"open","provider":source["name"],"external_id":str(issue.get("number","")),"discovered_at":int(time.time())})
+        except Exception as ex: errors.append({"source":source["name"],"error":str(ex)[:180]})
+    inserted=0
+    for item in found:
+        if item["source"] in existing: continue
+        if _persist_radar_opportunity(item): inserted+=1; existing.add(item["source"])
+    return jsonify({"ok":True,"discovered":len(found),"inserted":inserted,"sources":len(RADAR_SOURCES),"errors":errors,"mode":"REAL"})

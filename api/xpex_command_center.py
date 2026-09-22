@@ -1,5 +1,5 @@
 from flask import Blueprint, jsonify, request, Response
-import os, urllib.request, json, time, re
+import os, urllib.request, json, time, re, threading
 from pathlib import Path
 
 bp = Blueprint("xpex_command_center", __name__)
@@ -191,9 +191,9 @@ def _persist_radar_opportunity(item):
 def radar_status():
     return jsonify({"enabled":os.getenv("XPEX_OPPORTUNITY_RADAR_ENABLED","false").lower()=="true","sources":[s["name"] for s in RADAR_SOURCES],"mode":"real-public-sources"})
 
-@bp.post("/xpex/api/radar/scan")
-def radar_scan():
-    if os.getenv("XPEX_OPPORTUNITY_RADAR_ENABLED","false").lower()!="true": return jsonify({"error":"radar_disabled"}),503
+def _radar_scan_data():
+    if os.getenv("XPEX_OPPORTUNITY_RADAR_ENABLED","false").lower()!="true":
+        return {"ok":False,"error":"radar_disabled","discovered":0,"inserted":0,"sources":len(RADAR_SOURCES),"errors":[],"mode":"DISABLED"}
     existing=_existing_opportunity_urls(); found=[]; errors=[]
     for source in RADAR_SOURCES:
         try:
@@ -222,9 +222,28 @@ def radar_scan():
                         "updated_at":issue.get("updated_at"),
                     },
                 })
-        except Exception as ex: errors.append({"source":source["name"],"error":str(ex)[:180]})
+        except Exception as ex:
+            errors.append({"source":source["name"],"error":str(ex)[:180]})
     inserted=0
     for item in found:
         if item["source"] in existing: continue
-        if _persist_radar_opportunity(item): inserted+=1; existing.add(item["source"])
-    return jsonify({"ok":True,"discovered":len(found),"inserted":inserted,"sources":len(RADAR_SOURCES),"errors":errors,"mode":"REAL"})
+        if _persist_radar_opportunity(item):
+            inserted+=1
+            existing.add(item["source"])
+    return {"ok":True,"discovered":len(found),"inserted":inserted,"sources":len(RADAR_SOURCES),"errors":errors,"mode":"REAL"}
+
+@bp.post("/xpex/api/radar/scan")
+def radar_scan():
+    data=_radar_scan_data()
+    return jsonify(data), (200 if data.get("ok") else 503)
+
+def _radar_startup_worker():
+    time.sleep(4)
+    try:
+        data=_radar_scan_data()
+        print("XPEX_RADAR_STARTUP "+json.dumps(data,ensure_ascii=False))
+    except Exception as ex:
+        print("XPEX_RADAR_STARTUP "+json.dumps({"ok":False,"error":str(ex)[:220]}))
+
+if os.getenv("XPEX_RADAR_SCAN_ON_START","false").lower()=="true":
+    threading.Thread(target=_radar_startup_worker,daemon=True,name="xpex-radar-startup").start()

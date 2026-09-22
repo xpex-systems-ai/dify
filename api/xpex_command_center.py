@@ -22,6 +22,7 @@ def _ping(name, url):
     except Exception:
         return {"name": name, "status": "offline"}
 
+@bp.get("/")
 @bp.get("/xpex")
 @bp.get("/xpex/")
 def command_center():

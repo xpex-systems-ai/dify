@@ -200,6 +200,9 @@ def _radar_scan_data():
             for issue in _radar_fetch(source["url"]):
                 if issue.get("pull_request"): continue
                 title=str(issue.get("title",""))
+                title_l=title.strip().lower()
+                if title_l.startswith(("claim:", "[bounty claim]", "[wallet]", "[tracking]", "📌 faq")):
+                    continue
                 body=str(issue.get("body") or "")
                 hay=(title+" "+body[:1200]).lower()
                 if "bounty" not in hay and "reward" not in hay and "payout" not in hay: continue

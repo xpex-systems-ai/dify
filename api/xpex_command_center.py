@@ -4,6 +4,18 @@ from pathlib import Path
 
 bp = Blueprint("xpex_command_center", __name__)
 DATA_FILE = Path(os.getenv("XPEX_DATA_FILE", "/tmp/xpex_command_center.json"))
+SUPABASE_URL = os.getenv("XPEX_SUPABASE_URL", "").rstrip("/")
+SUPABASE_KEY = os.getenv("XPEX_SUPABASE_PUBLISHABLE_KEY", "")
+
+def _supabase(path, method="GET", payload=None):
+    if not SUPABASE_URL or not SUPABASE_KEY:
+        return None
+    url = SUPABASE_URL + "/functions/v1/xpex-core/" + path.lstrip("/")
+    headers = {"apikey": SUPABASE_KEY, "Authorization": "Bearer " + SUPABASE_KEY, "Content-Type": "application/json"}
+    data = json.dumps(payload).encode() if payload is not None else None
+    req = urllib.request.Request(url, data=data, headers=headers, method=method)
+    with urllib.request.urlopen(req, timeout=12) as r:
+        return json.loads(r.read().decode() or "{}")
 
 def _load_data():
     try:
@@ -59,17 +71,34 @@ def pipeline():
 
 @bp.get("/xpex/api/stats")
 def stats():
+    try:
+        s=_supabase("stats")
+        if s is not None:
+            revenue=sum(float(p.get("amount",0) or 0) for p in s.get("revenue_confirmed",[]) if p.get("currency")=="BRL")
+            return jsonify({"assets":s.get("assets",0),"opportunities":s.get("opportunities",0),"jobs":s.get("jobs",0),"deliveries":s.get("deliveries",0),"payments":s.get("payments",0),"revenue_brl":revenue,"storage":"supabase"})
+    except Exception:
+        pass
     d=_load_data()
     revenue=sum(float(p.get("amount_brl",0) or 0) for p in d["payments"] if p.get("status")=="confirmed")
-    return jsonify({"assets":len(d["assets"]),"opportunities":len([o for o in d["opportunities"] if o.get("status","open")=="open"]),"jobs":len(d["jobs"]),"deliveries":len(d["deliveries"]),"payments":len(d["payments"]),"revenue_brl":revenue})
+    return jsonify({"assets":len(d["assets"]),"opportunities":len([o for o in d["opportunities"] if o.get("status","open")=="open"]),"jobs":len(d["jobs"]),"deliveries":len(d["deliveries"]),"payments":len(d["payments"]),"revenue_brl":revenue,"storage":"fallback"})
 
 @bp.post("/xpex/api/assets")
 def add_asset():
-    d=_load_data(); item=request.get_json(silent=True) or {}; item["id"]=_id("AST"); item["created_at"]=int(time.time()); d["assets"].append(item); _save_data(d); return jsonify(item),201
+    item=request.get_json(silent=True) or {}
+    try:
+        x=_supabase("assets","POST",item)
+        if x is not None: return jsonify(x),201
+    except Exception: pass
+    d=_load_data(); item["id"]=_id("AST"); item["created_at"]=int(time.time()); d["assets"].append(item); _save_data(d); return jsonify(item),201
 
 @bp.post("/xpex/api/opportunities")
 def add_opportunity():
-    d=_load_data(); item=request.get_json(silent=True) or {}; item["id"]=_id("OPP"); item.setdefault("status","open"); item["created_at"]=int(time.time()); d["opportunities"].append(item); _save_data(d); return jsonify(item),201
+    item=request.get_json(silent=True) or {}; item.setdefault("status","open")
+    try:
+        x=_supabase("opportunities","POST",item)
+        if x is not None: return jsonify(x),201
+    except Exception: pass
+    d=_load_data(); item["id"]=_id("OPP"); item["created_at"]=int(time.time()); d["opportunities"].append(item); _save_data(d); return jsonify(item),201
 
 @bp.post("/xpex/api/execute")
 def execute_job():

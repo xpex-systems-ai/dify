@@ -70,9 +70,6 @@ else:
 
     socketio_app, flask_app = create_app()
     app = flask_app
-    # XPEX Intelligence Command Center routes
-    from xpex_command_center import bp as xpex_command_center_bp
-    app.register_blueprint(xpex_command_center_bp)
     celery = cast("Celery", app.extensions["celery"])
 
 if __name__ == "__main__":
